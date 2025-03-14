@@ -12,6 +12,7 @@ On macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
 On Windows: %APPDATA%\Claude\claude_desktop_config.json
 
 Edit the file (or create it if it doesn't exist) with the following configuration:
+```json
 {
   "mcpServers": {
     "twitter": {
@@ -25,6 +26,7 @@ Edit the file (or create it if it doesn't exist) with the following configuratio
     }
   }
 }
+```
 
 Make sure to:
 

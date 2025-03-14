@@ -30,6 +30,7 @@ On macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
 On Windows: %APPDATA%\Claude\claude_desktop_config.json
 
 For example:
+```json
 {
   "mcpServers": {
     "twitter": {
@@ -43,3 +44,4 @@ For example:
     }
   }
 }
+```
