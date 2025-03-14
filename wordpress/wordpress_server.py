@@ -90,6 +90,35 @@ class WordPressClient:
             response.raise_for_status()
             return response.json()
 
+    async def put_request(self, endpoint: str, data: Dict[str, Any], base_path: Optional[str] = None) -> Any:
+        """
+        Make a PUT request to the WordPress REST API.
+        
+        Args:
+            endpoint: API endpoint to call
+            data: Request body
+            base_path: Override the base API path (default: self.api_url)
+            
+        Returns:
+            JSON response
+        """
+        # Use the provided base_path or default to self.api_url
+        base = base_path if base_path else self.api_url
+        url = f"{base}/{endpoint.lstrip('/')}"
+        
+        # Print the URL for debugging
+        print(f"Making PUT request to: {url}", file=sys.stderr)
+        
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            response = await client.put(
+                url,
+                json=data,
+                auth=self.auth,
+                headers={"User-Agent": "WordPress-MCP-Server/1.0"}
+            )
+            response.raise_for_status()
+            return response.json()
+
 # Initialize WordPress client - will be configured during server startup
 wp_client = None
 
@@ -518,6 +547,74 @@ Link: {post_link}
     except Exception as e:
         return f"Error creating post: {str(e)}"
 
+@mcp.tool()
+async def update_post(
+    post_id: int,
+    title: Optional[str] = None,
+    content: Optional[str] = None,
+    status: Optional[str] = None,
+    categories: Optional[List[int]] = None,
+    tags: Optional[List[int]] = None
+) -> str:
+    """Update an existing WordPress blog post.
+    
+    Args:
+        post_id: ID of the post to update
+        title: New title of the post (optional)
+        content: New content of the post (can include HTML) (optional)
+        status: New post status (options: draft, publish, private, pending) (optional)
+        categories: New list of category IDs to assign (optional)
+        tags: New list of tag IDs to assign (optional)
+    
+    Returns:
+        Result of the post update operation
+    """
+    if wp_client is None:
+        return "WordPress client not initialized. Please set the WORDPRESS_URL environment variable."
+    
+    if not wp_client.username or not wp_client.password:
+        return "Authentication credentials (WORDPRESS_USERNAME and WORDPRESS_PASSWORD) are required to update posts."
+    
+    try:
+        # Prepare post data with only the fields that are provided
+        post_data = {}
+        if title is not None:
+            post_data["title"] = title
+        if content is not None:
+            post_data["content"] = content
+        if status is not None:
+            post_data["status"] = status
+        if categories is not None:
+            post_data["categories"] = categories
+        if tags is not None:
+            post_data["tags"] = tags
+        
+        # Update the post
+        result = await wp_client.put_request(f"posts/{post_id}", post_data)
+        
+        # Format the response
+        updated_title = result.get("title", {}).get("rendered", "No title")
+        post_link = result.get("link")
+        post_status = result.get("status")
+        
+        return f"""
+Success! Post updated:
+ID: {post_id}
+Title: {updated_title}
+Status: {post_status}
+Link: {post_link}
+"""
+    
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            return "Authentication failed. Please check your WordPress username and password."
+        elif e.response.status_code == 404:
+            return f"Post with ID {post_id} not found."
+        return f"Error updating post (HTTP {e.response.status_code}): {str(e)}"
+    
+    except Exception as e:
+        return f"Error updating post: {str(e)}"
+
 @mcp.resource("wordpress://site-info")
 async def get_site_info() -> str:
     """Get basic information about the WordPress site."""
@@ -586,6 +683,154 @@ async def get_api_routes() -> str:
     
     except Exception as e:
         return f"Error retrieving API routes: {str(e)}"
+
+@mcp.tool()
+async def create_page(
+    title: str,
+    content: str,
+    status: str = "draft",
+    parent_id: Optional[int] = None,
+    menu_order: Optional[int] = None,
+    template: Optional[str] = None
+) -> str:
+    """Create a new WordPress page.
+    
+    Args:
+        title: Title of the page
+        content: Content of the page (can include HTML)
+        status: Page status (default: draft, options: draft, publish, private, pending)
+        parent_id: ID of the parent page if this is a child page (optional)
+        menu_order: Order of the page in navigation menus (optional)
+        template: Template to use for the page (optional)
+    
+    Returns:
+        Result of the page creation operation
+    """
+    if wp_client is None:
+        return "WordPress client not initialized. Please set the WORDPRESS_URL environment variable."
+    
+    if not wp_client.username or not wp_client.password:
+        return "Authentication credentials (WORDPRESS_USERNAME and WORDPRESS_PASSWORD) are required to create pages."
+    
+    try:
+        # Prepare page data
+        page_data = {
+            "title": title,
+            "content": content,
+            "status": status
+        }
+        
+        # Add optional parameters if provided
+        if parent_id is not None:
+            page_data["parent"] = parent_id
+            
+        if menu_order is not None:
+            page_data["menu_order"] = menu_order
+            
+        if template is not None:
+            page_data["template"] = template
+        
+        # Create the page
+        result = await wp_client.post_request("pages", page_data)
+        
+        # Format the response
+        page_id = result.get("id")
+        page_link = result.get("link")
+        page_status = result.get("status")
+        
+        return f"""
+Success! Page created:
+ID: {page_id}
+Title: {title}
+Status: {page_status}
+Link: {page_link}
+Parent ID: {result.get('parent', 'None')}
+Menu Order: {result.get('menu_order', 'Default')}
+Template: {result.get('template', 'Default')}
+"""
+    
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            return "Authentication failed. Please check your WordPress username and password."
+        return f"Error creating page (HTTP {e.response.status_code}): {str(e)}"
+    
+    except Exception as e:
+        return f"Error creating page: {str(e)}"
+
+@mcp.tool()
+async def update_page(
+    page_id: int,
+    title: Optional[str] = None,
+    content: Optional[str] = None,
+    status: Optional[str] = None,
+    parent_id: Optional[int] = None,
+    menu_order: Optional[int] = None,
+    template: Optional[str] = None
+) -> str:
+    """Update an existing WordPress page.
+    
+    Args:
+        page_id: ID of the page to update
+        title: New title of the page (optional)
+        content: New content of the page (can include HTML) (optional)
+        status: New page status (options: draft, publish, private, pending) (optional)
+        parent_id: New parent page ID if this is a child page (optional)
+        menu_order: New order of the page in navigation menus (optional)
+        template: New template to use for the page (optional)
+    
+    Returns:
+        Result of the page update operation
+    """
+    if wp_client is None:
+        return "WordPress client not initialized. Please set the WORDPRESS_URL environment variable."
+    
+    if not wp_client.username or not wp_client.password:
+        return "Authentication credentials (WORDPRESS_USERNAME and WORDPRESS_PASSWORD) are required to update pages."
+    
+    try:
+        # Prepare page data with only the fields that are provided
+        page_data = {}
+        if title is not None:
+            page_data["title"] = title
+        if content is not None:
+            page_data["content"] = content
+        if status is not None:
+            page_data["status"] = status
+        if parent_id is not None:
+            page_data["parent"] = parent_id
+        if menu_order is not None:
+            page_data["menu_order"] = menu_order
+        if template is not None:
+            page_data["template"] = template
+        
+        # Update the page
+        result = await wp_client.put_request(f"pages/{page_id}", page_data)
+        
+        # Format the response
+        updated_title = result.get("title", {}).get("rendered", "No title")
+        page_link = result.get("link")
+        page_status = result.get("status")
+        
+        return f"""
+Success! Page updated:
+ID: {page_id}
+Title: {updated_title}
+Status: {page_status}
+Link: {page_link}
+Parent ID: {result.get('parent', 'None')}
+Menu Order: {result.get('menu_order', 'Default')}
+Template: {result.get('template', 'Default')}
+"""
+    
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            return "Authentication failed. Please check your WordPress username and password."
+        elif e.response.status_code == 404:
+            return f"Page with ID {page_id} not found."
+        return f"Error updating page (HTTP {e.response.status_code}): {str(e)}"
+    
+    except Exception as e:
+        return f"Error updating page: {str(e)}"
 
 if __name__ == "__main__":
     import os
